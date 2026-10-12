@@ -84,6 +84,9 @@ public final class AutoUpdater {
 
 	public static void register(com.mojang.brigadier.CommandDispatcher<CommandSourceStack> dispatcher) {
 		dispatcher.register(Commands.literal("grumanda")
+				.then(Commands.literal("check")
+						.requires(Commands.hasPermission(Commands.LEVEL_ADMINS))
+						.executes(context -> checkForUpdate(context.getSource())))
 				.then(Commands.literal("update")
 						.requires(Commands.hasPermission(Commands.LEVEL_ADMINS))
 						.executes(context -> startUpdate(context.getSource()))));
@@ -105,6 +108,35 @@ public final class AutoUpdater {
 	}
 
 	private static void checkForUpdate() {
+		checkForUpdate(null);
+	}
+
+	private static int checkForUpdate(CommandSourceStack source) {
+		if (source == null) {
+			return 1;
+		}
+		source.sendSuccess(() -> Component.literal("Suche nach einem neuen Grumanda-Mod-Release ..."), false);
+		EXECUTOR.execute(() -> {
+			CheckResult result = fetchLatestRelease();
+			MinecraftServer activeServer = server;
+			if (activeServer == null) {
+				return;
+			}
+			activeServer.execute(() -> {
+				if (result.error() != null) {
+					source.sendFailure(Component.literal("Release-Prüfung fehlgeschlagen: " + result.error()));
+				} else if (result.release() == null) {
+					source.sendSuccess(() -> Component.literal("Kein neueres Release gefunden."), false);
+				} else {
+					source.sendSuccess(() -> Component.literal("Neues Release " + result.release().tag()
+							+ " gefunden. Verwende /grumanda update oder klicke auf den Update-Button."), false);
+				}
+			});
+		});
+		return 1;
+	}
+
+	private static CheckResult fetchLatestRelease() {
 		try {
 			HttpRequest request = HttpRequest.newBuilder(RELEASE_API)
 					.timeout(Duration.ofSeconds(20))
@@ -116,7 +148,8 @@ public final class AutoUpdater {
 					request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 			if (response.statusCode() == 404) {
 				GrumandaServerMod.LOGGER.info("No published GitHub release exists yet; auto-updates are idle.");
-				return;
+				latestRelease = null;
+				return new CheckResult(null, null);
 			}
 			if (response.statusCode() != 200) {
 				throw new IOException("GitHub release check returned HTTP " + response.statusCode());
@@ -126,7 +159,7 @@ public final class AutoUpdater {
 			String currentVersion = currentVersion();
 			if (compareVersions(release.version(), currentVersion) <= 0) {
 				latestRelease = null;
-				return;
+				return new CheckResult(null, null);
 			}
 
 			Release previous = latestRelease;
@@ -137,18 +170,16 @@ public final class AutoUpdater {
 					activeServer.execute(() -> notifyOperatorsOfAvailableUpdate(release));
 				}
 			}
+			return new CheckResult(release, null);
 		} catch (Exception exception) {
 			GrumandaServerMod.LOGGER.error("Could not check for a Grumanda mod release.", exception);
+			return new CheckResult(null, safeMessage(exception));
 		}
 	}
 
 	private static Release parseRelease(JsonObject json) throws IOException {
 		String tag = requiredString(json, "tag_name");
 		String version = normalizeVersion(tag);
-		String currentVersion = currentVersion();
-		if (compareVersions(version, currentVersion) <= 0) {
-			throw new IOException("The latest release tag is not newer than the installed version.");
-		}
 
 		JsonArray assets = json.getAsJsonArray("assets");
 		if (assets == null) {
@@ -508,6 +539,9 @@ public final class AutoUpdater {
 	}
 
 	private record Release(String version, String tag, URI downloadUri, String changelog, String digest) {
+	}
+
+	private record CheckResult(Release release, String error) {
 	}
 
 	private record Notice(String version, String tag, String changelog, Set<UUID> notified) {
