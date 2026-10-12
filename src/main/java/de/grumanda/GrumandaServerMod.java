@@ -17,6 +17,7 @@ import de.grumanda.database.Coords;
 import de.grumanda.database.DatabaseManager;
 import de.grumanda.database.User;
 import de.grumanda.images.ImageMapCommand;
+import de.grumanda.update.AutoUpdater;
 
 import java.sql.SQLException;
 
@@ -33,12 +34,15 @@ public class GrumandaServerMod implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		AutoUpdater.initialize();
+
 		// This code runs as soon as Minecraft is in a mod-load-ready state.
 		// However, some things (like resources) may still be uninitialized.
 		// Proceed with mild caution.
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 				ImageMapCommand.register(dispatcher);
+				AutoUpdater.register(dispatcher);
 
 				dispatcher.register(Commands.literal("post")
 						.then(Commands.argument("location", StringArgumentType.greedyString())
