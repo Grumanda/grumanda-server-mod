@@ -12,7 +12,16 @@ Use `/bildgroesse <direct image URL> <breite|hoehe> <blocks>` to calculate the o
 
 ## Auto-updater
 
-The server checks the latest published release in [GitHub Releases](https://github.com/Grumanda/grumanda-server-mod/releases) at startup and every six hours. Operators can also run `/grumanda check` to check immediately. Operators are notified in chat and can click the update button (or run `/grumanda update`). The updater downloads and validates the matching mod JAR, replaces the installed JAR, and runs `systemctl restart minecraft`. The Minecraft service account must be allowed to restart that systemd unit without an interactive password prompt.
+The server checks the latest published release in [GitHub Releases](https://github.com/Grumanda/grumanda-server-mod/releases) at startup and every six hours. Operators can also run `/grumanda check` to check immediately. Operators are notified in chat and can click the update button (or run `/grumanda update`). The updater downloads and validates the matching mod JAR, installs it under its release-version filename, removes older JARs for this mod, verifies the installed JAR version, and runs `/usr/bin/sudo -n /usr/bin/systemctl restart minecraft`.
+
+The service account needs write permission on `/opt/minecraft/server/mods` to replace a JAR. Check which account runs the service with `sudo systemctl show minecraft -p User -p WorkingDirectory`. If it runs as `minecraft`, grant that account ownership of the mods directory (this does not change the JARs or other server files):
+
+```sh
+sudo chown minecraft:minecraft /opt/minecraft/server/mods
+sudo chmod u+rwx /opt/minecraft/server/mods
+```
+
+The service account must also be allowed to restart the systemd unit without a password. Create a narrow sudoers rule with `sudo visudo -f /etc/sudoers.d/minecraft-mod-updater` and add `minecraft ALL=(root) NOPASSWD: /usr/bin/systemctl restart minecraft`. Check the installed rule without restarting the server using `sudo -l -U minecraft /usr/bin/systemctl restart minecraft`. If `systemctl` is installed at a different path, update both the sudoers rule and the updater command to match.
 
 To publish an update, push a version tag such as `v1.0.1`. The release workflow builds the matching version and publishes the JAR as `grumanda-server-mod-1.0.1.jar`. Add the change summary to the GitHub release notes; operators, including those who were offline during the update, receive that changelog when they next join after the restart.
 

@@ -3,6 +3,7 @@ package de.grumanda.update;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import de.grumanda.GrumandaServerMod;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -225,14 +226,13 @@ public final class AutoUpdater {
 			source.sendFailure(Component.literal("Ein Update läuft bereits."));
 			return 0;
 		}
-		ServerPlayer initiator = source.getPlayer();
 		source.sendSuccess(() -> Component.literal("Update auf " + release.tag()
 				+ " wird vorbereitet. Der Server startet anschließend neu."), false);
-		EXECUTOR.execute(() -> downloadAndInstall(release, initiator));
+		EXECUTOR.execute(() -> downloadAndInstall(release));
 		return 1;
 	}
 
-	private static void downloadAndInstall(Release release, ServerPlayer initiator) {
+	private static void downloadAndInstall(Release release) {
 		Path temporaryJar = null;
 		try {
 			MinecraftServer activeServer = server;
@@ -252,6 +252,10 @@ public final class AutoUpdater {
 					|| !activeJar.getFileName().toString().endsWith(".jar")) {
 				throw new IOException("The loaded mod is not a JAR directly inside the server's mods directory.");
 			}
+			if (!Files.isWritable(expectedModsDirectory)) {
+				throw new IOException("The Minecraft service user cannot write to the mods directory: "
+						+ expectedModsDirectory);
+			}
 
 			byte[] jarBytes = downloadJar(release);
 			temporaryJar = Files.createTempFile(expectedModsDirectory, "grumanda-update-", ".jar.tmp");
@@ -260,32 +264,41 @@ public final class AutoUpdater {
 
 			Notice newNotice = new Notice(release.version(), release.tag(), release.changelog(), new HashSet<>());
 			writeNotice(newNotice);
-			replaceAtomically(temporaryJar, activeJar);
+			Path installedJar = expectedModsDirectory.resolve(
+					"grumanda-server-mod-" + release.version() + ".jar");
+			replaceAtomically(temporaryJar, installedJar);
 			temporaryJar = null;
+			validateJar(installedJar, release.version());
+			removeOldModJars(expectedModsDirectory, installedJar);
+			GrumandaServerMod.LOGGER.info("Installed Grumanda mod {} at {}.",
+					release.tag(), installedJar);
 			pendingNotice = newNotice;
 
 			MinecraftServer runningServer = server;
 			if (runningServer != null) {
 				runningServer.execute(() -> notifyOperators(Component.literal(
-						"Update heruntergeladen. Der Server wird jetzt über systemctl neu gestartet.")));
+						"Update " + release.tag() + " wurde nach " + installedJar
+								+ " installiert. Der Server wird jetzt neu gestartet.")));
 			}
-			Process restart = new ProcessBuilder("systemctl", "restart", "minecraft")
-					.inheritIO()
+			Process restart = new ProcessBuilder(
+					"/usr/bin/sudo", "-n", "/usr/bin/systemctl", "restart", "minecraft")
+					.redirectErrorStream(true)
 					.start();
-			if (restart.waitFor(15, TimeUnit.SECONDS) && restart.exitValue() != 0) {
-				throw new IOException("systemctl restart minecraft exited with code " + restart.exitValue());
+			if (!restart.waitFor(30, TimeUnit.SECONDS)) {
+				restart.destroyForcibly();
+				throw new IOException("sudo systemctl restart minecraft did not finish within 30 seconds.");
+			}
+			if (restart.exitValue() != 0) {
+				String output = new String(restart.getInputStream().readNBytes(4096), StandardCharsets.UTF_8).trim();
+				throw new IOException("sudo systemctl restart minecraft exited with code "
+						+ restart.exitValue() + (output.isEmpty() ? "" : ": " + output));
 			}
 		} catch (Exception exception) {
 			GrumandaServerMod.LOGGER.error("Could not complete the Grumanda mod update.", exception);
 			MinecraftServer activeServer = server;
 			if (activeServer != null) {
 				String message = "Update fehlgeschlagen: " + safeMessage(exception);
-				activeServer.execute(() -> {
-					if (initiator != null && initiator.isAlive()) {
-						initiator.sendSystemMessage(Component.literal(message));
-					}
-					notifyOperators(Component.literal(message));
-				});
+				activeServer.execute(() -> notifyOperators(Component.literal(message)));
 			}
 		} finally {
 			if (temporaryJar != null) {
@@ -296,6 +309,41 @@ public final class AutoUpdater {
 				}
 			}
 			UPDATE_IN_PROGRESS.set(false);
+		}
+	}
+
+	private static void removeOldModJars(Path modsDirectory, Path installedJar) throws IOException {
+		try (var files = Files.list(modsDirectory)) {
+			for (Path file : files.filter(path -> Files.isRegularFile(path)
+					&& path.getFileName().toString().endsWith(".jar")
+					&& !path.equals(installedJar)).toList()) {
+				boolean isOurMod;
+				try {
+					isOurMod = isGrumandaModJar(file);
+				} catch (IOException | IllegalStateException | JsonParseException exception) {
+					GrumandaServerMod.LOGGER.warn(
+							"Could not inspect JAR while removing previous Grumanda mod versions: {}.", file, exception);
+					continue;
+				}
+				if (isOurMod) {
+					Files.delete(file);
+					GrumandaServerMod.LOGGER.info("Removed previous Grumanda mod JAR {}.", file);
+				}
+			}
+		}
+	}
+
+	private static boolean isGrumandaModJar(Path jar) throws IOException {
+		try (JarFile archive = new JarFile(jar.toFile())) {
+			var metadataEntry = archive.getJarEntry("fabric.mod.json");
+			if (metadataEntry == null) {
+				return false;
+			}
+			try (InputStream input = archive.getInputStream(metadataEntry)) {
+				JsonObject metadata = JsonParser.parseString(
+						new String(input.readNBytes(64 * 1024), StandardCharsets.UTF_8)).getAsJsonObject();
+				return GrumandaServerMod.MOD_ID.equals(requiredString(metadata, "id"));
+			}
 		}
 	}
 
