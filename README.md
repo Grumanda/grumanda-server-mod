@@ -10,6 +10,8 @@ Players can create a one-use image placement item with `/bild <direct image URL>
 
 Use `/bildgroesse <direct image URL> <breite|hoehe> <blocks>` to calculate the other dimension from the image's aspect ratio. The command prints the matching `/bild` command. For example: `/bildgroesse https://example.org/image.png breite 30`.
 
+Operators can set the speed multiplier for all Happy Ghasts with `/ghast speed <factor>`, for example `/ghast speed 2` for twice the vanilla flying speed. `/ghast speed` displays the current multiplier; use `/ghast speed 1` to restore vanilla speed. The setting is saved across restarts and applies to existing and newly loaded Happy Ghasts. The allowed range is 0.1× to 10×.
+
 ## Auto-updater
 
 The server checks the latest published release in [GitHub Releases](https://github.com/Grumanda/grumanda-server-mod/releases) at startup and every six hours. Operators can also run `/grumanda check` to check immediately. Operators are notified in chat and can click the update button (or run `/grumanda update`). The updater downloads and validates the matching mod JAR, installs it under its release-version filename, removes older JARs for this mod, verifies the installed JAR version, and runs `/usr/bin/sudo -n /usr/bin/systemctl restart minecraft`.

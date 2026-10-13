@@ -18,6 +18,7 @@ import de.grumanda.database.DatabaseManager;
 import de.grumanda.database.User;
 import de.grumanda.images.ImageMapCommand;
 import de.grumanda.update.AutoUpdater;
+import de.grumanda.ghast.HappyGhastCommand;
 
 import java.sql.SQLException;
 
@@ -35,6 +36,7 @@ public class GrumandaServerMod implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		AutoUpdater.initialize();
+		HappyGhastCommand.initialize();
 
 		// This code runs as soon as Minecraft is in a mod-load-ready state.
 		// However, some things (like resources) may still be uninitialized.
@@ -43,6 +45,7 @@ public class GrumandaServerMod implements ModInitializer {
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 				ImageMapCommand.register(dispatcher);
 				AutoUpdater.register(dispatcher);
+				HappyGhastCommand.register(dispatcher);
 
 				dispatcher.register(Commands.literal("post")
 						.then(Commands.argument("location", StringArgumentType.greedyString())
